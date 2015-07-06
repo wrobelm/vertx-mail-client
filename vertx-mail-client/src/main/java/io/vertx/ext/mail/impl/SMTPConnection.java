@@ -244,7 +244,6 @@ class SMTPConnection {
         log.debug("returning connection to pool");
         commandReplyHandler = null;
         listener.dataEnded(this);
-        log.debug("setting error handler to null");
         errorHandler = null;
       }
     }

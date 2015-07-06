@@ -36,7 +36,7 @@ public abstract class SMTPTestBase extends VertxTestBase {
   /*
    * test context the unit test this is running with
    * this is used to construct the Async objects and do the
-   * assert operations
+   * assert/fail operations
    */
   TestContext testContext;
 
