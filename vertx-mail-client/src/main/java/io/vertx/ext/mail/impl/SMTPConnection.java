@@ -31,17 +31,19 @@ class SMTPConnection {
   private boolean idle;
   private boolean doShutdown;
   private final NetClient client;
+  private final Vertx vertx;
   private Capabilities capa = new Capabilities();
   private final ConnectionLifeCycleListener listener;
   private Context context;
 
-  SMTPConnection(NetClient client, ConnectionLifeCycleListener listener) {
+  SMTPConnection(NetClient client, Vertx vertx, ConnectionLifeCycleListener listener) {
     broken = true;
     idle = false;
     doShutdown = false;
     socketClosed = false;
     socketShutDown = false;
     this.client = client;
+    this.vertx = vertx;
     this.listener = listener;
   }
 
@@ -67,6 +69,7 @@ class SMTPConnection {
     commandReplyHandler = null;
     socketShutDown = true;
     if (ns != null) {
+      assert(Vertx.currentContext() == context);
       ns.close();
       ns = null;
     }
@@ -107,6 +110,7 @@ class SMTPConnection {
             log.debug("command: " + logStr.substring(0, 1000) + "...");
           }
         }
+        assert(Vertx.currentContext() == context);
         ns.write(str + "\r\n");
       } else {
         log.debug("not sending command " + str + " since the netsocket is null");
@@ -119,6 +123,7 @@ class SMTPConnection {
     if (mayLog) {
       log.debug(str);
     }
+    assert(Vertx.currentContext() == context);
     ns.write(str + "\r\n");
   }
 
@@ -127,8 +132,10 @@ class SMTPConnection {
     if (mayLog) {
       log.debug(str);
     }
+    assert(Vertx.currentContext() == context);
     if (ns.writeQueueFull()) {
       ns.drainHandler(v -> {
+        assert(Vertx.currentContext() == context);
         // avoid getting confused by being called twice
         ns.drainHandler(null);
         ns.write(str + "\r\n");
@@ -141,6 +148,7 @@ class SMTPConnection {
   }
 
   boolean writeQueueFull() {
+    assert(Vertx.currentContext() == context);
     return ns.writeQueueFull();
   }
 
@@ -157,70 +165,80 @@ class SMTPConnection {
     broken = false;
     idle = false;
 
-    client.connect(config.getPort(), config.getHostname(), asyncResult -> {
-      if (asyncResult.succeeded()) {
-        context = Vertx.currentContext();
-        ns = asyncResult.result();
-        socketClosed = false;
-        ns.exceptionHandler(e -> {
-          // avoid returning two exceptions
-          log.debug("exceptionHandler called");
-          if (!socketClosed && !socketShutDown && !idle && !broken) {
-            setBroken();
-            log.debug("got an exception on the netsocket", e);
-            handleError(e);
-          } else {
-            log.debug("not returning follow-up exception", e);
-          }
-        });
-        ns.closeHandler(v -> {
-          log.debug("socket has been closed");
-          listener.connectionClosed(this);
-          socketClosed = true;
-          // avoid exception if we regularly shut down the socket on our side
-          if (!socketShutDown && !idle && !broken) {
-            setBroken();
-            log.debug("throwing: connection has been closed by the server");
-            handleError("connection has been closed by the server");
-          } else {
-            if (socketShutDown || broken) {
-              log.debug("close has been expected");
-            } else {
-              log.debug("closed while connection has been idle (timeout on server?)");
-            }
-            if (!broken) {
+    if (context == null) {
+      context = vertx.getOrCreateContext();
+    }
+
+    context.runOnContext(v1 -> {
+      client.connect(config.getPort(), config.getHostname(), asyncResult -> {
+        if (asyncResult.succeeded()) {
+          ns = asyncResult.result();
+          socketClosed = false;
+          ns.exceptionHandler(e -> {
+            assert(Vertx.currentContext() == context);
+            // avoid returning two exceptions
+            log.debug("exceptionHandler called");
+            if (!socketClosed && !socketShutDown && !idle && !broken) {
               setBroken();
+              log.debug("got an exception on the netsocket", e);
+              handleError(e);
+            } else {
+              log.debug("not returning follow-up exception", e);
             }
-            if (!socketShutDown) {
-              shutdown();
-              listener.dataEnded(this);
+          });
+          ns.closeHandler(v -> {
+            assert(Vertx.currentContext() == context);
+            log.debug("socket has been closed");
+            listener.connectionClosed(this);
+            socketClosed = true;
+            // avoid exception if we regularly shut down the socket on our side
+            if (!socketShutDown && !idle && !broken) {
+              setBroken();
+              log.debug("throwing: connection has been closed by the server");
+              handleError("connection has been closed by the server");
+            } else {
+              if (socketShutDown || broken) {
+                log.debug("close has been expected");
+              } else {
+                log.debug("closed while connection has been idle (timeout on server?)");
+              }
+              if (!broken) {
+                setBroken();
+              }
+              if (!socketShutDown) {
+                shutdown();
+                listener.dataEnded(this);
+              }
             }
-          }
-        });
-        commandReplyHandler = initialReplyHandler;
-        final Handler<Buffer> mlp = new MultilineParser(buffer -> {
-          if (commandReplyHandler == null) {
-            log.debug("dropping reply arriving after we stopped processing \"" + buffer.toString() + "\"");
-          } else {
-            // make sure we only call the handler once
-            Handler<String> currentHandler = commandReplyHandler;
-            commandReplyHandler = null;
-            currentHandler.handle(buffer.toString());
-          }
-        });
-        ns.handler(mlp);
-      } else {
-        log.error("exception on connect", asyncResult.cause());
-        handleError(asyncResult.cause());
-      }
+          });
+          commandReplyHandler = initialReplyHandler;
+          final Handler<Buffer> mlp = new MultilineParser(buffer -> {
+            assert(Vertx.currentContext() == context);
+            if (commandReplyHandler == null) {
+              log.debug("dropping reply arriving after we stopped processing \"" + buffer.toString() + "\"");
+            } else {
+              // make sure we only call the handler once
+              Handler<String> currentHandler = commandReplyHandler;
+              commandReplyHandler = null;
+              currentHandler.handle(buffer.toString());
+            }
+          });
+          ns.handler(mlp);
+        } else {
+          log.error("exception on connect", asyncResult.cause());
+          handleError(asyncResult.cause());
+        }
+      });
     });
   }
 
   boolean isSsl() {
+    assert(Vertx.currentContext() == context);
     return ns.isSsl();
   }
 
   void upgradeToSsl(Handler<Void> handler) {
+    assert(Vertx.currentContext() == context);
     ns.upgradeToSsl(handler);
   }
 

@@ -208,7 +208,7 @@ class SMTPConnectionPool implements ConnectionLifeCycleListener {
   }
 
   private void createConnection(Handler<AsyncResult<SMTPConnection>> handler) {
-    SMTPConnection conn = new SMTPConnection(netClient, this);
+    SMTPConnection conn = new SMTPConnection(netClient, vertx, this);
     new SMTPStarter(vertx, conn, config, result -> {
       if (result.succeeded()) {
         handler.handle(Future.succeededFuture(conn));
